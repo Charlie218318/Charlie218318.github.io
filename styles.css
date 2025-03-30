@@ -1,0 +1,17 @@
+body {
+    background-color: antiquewhite;
+}
+h1{
+    font-style: italic; text-align:center
+}
+h2,p{
+    text-align:center
+}
+.pigs{
+    display: flex;
+    justify-content: space-between
+}
+.ores,.ores2,.ores3,.ores4{
+    display: flex;
+    justify-content: center
+}
