@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Base Defense Shooter</title>
+<style>
+body {
+    margin: 0;
+    background: #05070f;
+    color: white;
+    font-family: Arial, sans-serif;
+    text-align: center;
+    user-select: none;
+}
+canvas {
+    display: block;
+    margin: 0 auto;
+    background: radial-gradient(circle at center, #1b2440 0%, #05070f 100%);
+    border: 2px solid #fff;
+}
+</style>
+</head>
+<body>
+<h1>Press SPACE to shoot • Defend the core</h1>
+<canvas id="gameCanvas" width="800" height="500"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const keys = {};
+let score = 0;
+let health = 100;
+let gameOver = false;
+
+// Player
+const player = { x: canvas.width/2, y: canvas.height-40, radius: 20, speed:5, lastShot:0, shootCooldown:300 };
+
+// Bullets
+const playerBullets = [];
+const enemyBullets = [];
+
+// Explosion particles
+const explosions = [];
+
+// Shields
+const shields = [];
+const pixelSize = 7;
+const shieldCols = 20;
+const shieldRows = 4;
+const shieldWidth = shieldCols * pixelSize;
+const shieldHeight = shieldRows * pixelSize;
+const shieldCount = 4;
+for (let i=0;i<shieldCount;i++){
+    const spacing = (canvas.width - shieldWidth * shieldCount)/(shieldCount+1);
+    const shieldX = spacing + i*(shieldWidth+spacing);
+    const shieldY = canvas.height-120;
+    let pixels = [];
+    for(let r=0;r<shieldRows;r++){
+        pixels[r]=[];
+        for(let c=0;c<shieldCols;c++){
+            pixels[r][c]=true;
+        }
+    }
+    shields.push({x:shieldX,y:shieldY,pixels});
+}
+
+// Alien types
+const alienTypes=[
+    {type:'small', color:'white', radius:12, points:10, minShoot:2500, maxShoot:4000},
+    {type:'medium', color:'lightgray', radius:18, points:20, minShoot:3000, maxShoot:4500},
+    {type:'big', color:'darkgray', radius:22, points:30, minShoot:3500, maxShoot:5000}
+];
+
+// Enemies
+let enemies=[];
+const enemyRows=6;
+const enemyCols=5;
+const enemySpacingX=80;
+const enemySpacingY=50;
+let enemyDirection=1;
+let lastEnemySpawn=0;
+
+// Boss
+let boss=null;
+const bossWaveThreshold = 5; // waves before boss appears
+let wavesCompleted = 0;
+
+function spawnEnemies(){
+    enemies=[];
+    const startX=100;
+    const startY=50;
+    for(let r=0;r<enemyRows;r++){
+        for(let c=0;c<enemyCols;c++){
+            const type=alienTypes[Math.floor(Math.random()*alienTypes.length)];
+            enemies.push({
+                x:startX+c*enemySpacingX,
+                y:startY+r*enemySpacingY,
+                radius:type.radius,
+                color:type.color,
+                points:type.points,
+                shootCooldown:Math.random()*(type.maxShoot-type.minShoot)+type.minShoot
+            });
+        }
+    }
+}
+
+// Boss spawn
+function spawnBoss(){
+    boss = {
+        x:canvas.width/2,
+        y:100,
+        radius:50,
+        health:500,
+        points:200,
+        shootCooldown:2000,
+        direction:1
+    };
+}
+
+// Event Listeners
+document.addEventListener('keydown', e=>{keys[e.key]=true;if(e.code==='Space') shootPlayer();});
+document.addEventListener('keyup', e=>keys[e.key]=false);
+
+// Player shooting
+function shootPlayer(){
+    const now=Date.now();
+    if(gameOver || now-player.lastShot<player.shootCooldown) return;
+    playerBullets.push({x:player.x, y:player.y-player.radius, vx:0, vy:-7, size:7});
+    player.lastShot = now;
+}
+
+// Enemy shooting
+function shootEnemy(enemy){
+    enemyBullets.push({x:enemy.x, y:enemy.y+enemy.radius, vx:0, vy:7, size:7, damage:100});
+}
+
+// Boss shooting
+function shootBoss(){
+    if(!boss) return;
+    // Shoots three bullets
+    enemyBullets.push({x:boss.x, y:boss.y+boss.radius, vx:-2, vy:6, size:8, damage:100});
+    enemyBullets.push({x:boss.x, y:boss.y+boss.radius, vx:0, vy:7, size:8, damage:100});
+    enemyBullets.push({x:boss.x, y:boss.y+boss.radius, vx:2, vy:6, size:8, damage:100});
+}
+
+// Explosion effect
+function createExplosion(x,y,color){
+    for(let i=0;i<6;i++){
+        explosions.push({
+            x:x,
+            y:y,
+            vx:(Math.random()-0.5)*2,
+            vy:(Math.random()-0.5)*2,
+            size:Math.random()*3+2,
+            life:20,
+            color: color
+        });
+    }
+}
+
+// Game Loop
+function update(delta){
+    if(gameOver) return;
+
+    // Player move
+    if(keys['a'] || keys['ArrowLeft']) player.x -= player.speed;
+    if(keys['d'] || keys['ArrowRight']) player.x += player.speed;
+    player.x = Math.max(player.radius, Math.min(canvas.width-player.radius, player.x));
+
+    // Enemies move
+    let edgeHit=false;
+    enemies.forEach(e=>{e.x+=enemyDirection*1;if(e.x+e.radius>canvas.width || e.x-e.radius<0) edgeHit=true;});
+    if(edgeHit) enemyDirection*=-1;
+
+    // Enemy shooting
+    enemies.forEach(e=>{
+        e.shootCooldown -= delta;
+        if(e.shootCooldown<=0){
+            shootEnemy(e);
+            const type = alienTypes.find(t=>t.color===e.color);
+            e.shootCooldown = (Math.random()*(type.maxShoot-type.minShoot)+type.minShoot)*2; // 50% less often
+        }
+    });
+
+    // Boss move & shoot
+    if(boss){
+        boss.x += boss.direction*2;
+        if(boss.x+boss.radius>canvas.width || boss.x-boss.radius<0) boss.direction*=-1;
+        boss.shootCooldown -= delta;
+        if(boss.shootCooldown <=0){
+            shootBoss();
+            boss.shootCooldown=2000;
+        }
+    }
+
+    // Player bullets
+    for(let i=playerBullets.length-1;i>=0;i--){
+        const b = playerBullets[i];
+        b.x += b.vx;
+        b.y += b.vy;
+        if(b.x<0||b.x>canvas.width||b.y<0||b.y>canvas.height){playerBullets.splice(i,1);continue;}
+
+        // Enemy collision
+        let hit=false;
+        for(let j=enemies.length-1;j>=0;j--){
+            const e=enemies[j];
+            const dx=b.x-e.x, dy=b.y-e.y;
+            if(Math.sqrt(dx*dx+dy*dy)<e.radius+b.size/2){
+                score+=e.points;
+                createExplosion(e.x,e.y,e.color);
+                enemies.splice(j,1);
+                playerBullets.splice(i,1);
+                hit=true;
+                break;
+            }
+        }
+        if(hit) continue;
+
+        // Boss collision
+        if(boss){
+            const dx = b.x-boss.x, dy = b.y-boss.y;
+            if(Math.sqrt(dx*dx+dy*dy)<boss.radius+b.size/2){
+                boss.health -=10;
+                createExplosion(b.x,b.y,'red');
+                playerBullets.splice(i,1);
+                if(boss.health<=0){
+                    score+=boss.points;
+                    boss=null;
+                }
+                continue;
+            }
+        }
+
+        // Shield collision with extra damage
+        shields.forEach(shield=>{
+            const relX = Math.floor((b.x-shield.x)/pixelSize);
+            const relY = Math.floor((b.y-shield.y)/pixelSize);
+            if(relX>=0&&relX<shieldCols && relY>=0&&relY<shieldRows){
+                if(shield.pixels[relY][relX]){
+                    shield.pixels[relY][relX]=false;
+                    // extra adjacent pixels
+                    [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dy])=>{
+                        const nx=relX+dx, ny=relY+dy;
+                        if(nx>=0&&nx<shieldCols && ny>=0&&ny<shieldRows) shield.pixels[ny][nx]=false;
+                    });
+                    createExplosion(b.x,b.y,'lime');
+                    playerBullets.splice(i,1);
+                }
+            }
+        });
+    }
+
+    // Enemy bullets
+    for(let i=enemyBullets.length-1;i>=0;i--){
+        const b=enemyBullets[i];
+        b.x+=b.vx; b.y+=b.vy;
+        if(b.x<0||b.x>canvas.width||b.y<0||b.y>canvas.height){enemyBullets.splice(i,1);continue;}
+        const dx=b.x-player.x, dy=b.y-player.y;
+        if(Math.sqrt(dx*dx+dy*dy)<player.radius+b.size/2){
+            health-=b.damage||10;
+            createExplosion(b.x,b.y,'yellow');
+            enemyBullets.splice(i,1);
+            if(health<=0) gameOver=true;
+            continue;
+        }
+
+        // Shields
+        shields.forEach(shield=>{
+            const relX=Math.floor((b.x-shield.x)/pixelSize);
+            const relY=Math.floor((b.y-shield.y)/pixelSize);
+            if(relX>=0&&relX<shieldCols&&relY>=0&&relY<shieldRows){
+                if(shield.pixels[relY][relX]){
+                    shield.pixels[relY][relX]=false;
+                    // extra pixels
+                    [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dy])=>{
+                        const nx=relX+dx, ny=relY+dy;
+                        if(nx>=0&&nx<shieldCols && ny>=0&&ny<shieldRows) shield.pixels[ny][nx]=false;
+                    });
+                    createExplosion(b.x,b.y,'yellow');
+                    enemyBullets.splice(i,1);
+                }
+            }
+        });
+    }
+
+    // Update explosions
+    for(let i=explosions.length-1;i>=0;i--){
+        const p=explosions[i];
+        p.x+=p.vx; p.y+=p.vy;
+        p.size*=0.95;
+        p.life--;
+        if(p.life<=0) explosions.splice(i,1);
+    }
+
+    // Spawn waves
+    if(!boss && Date.now()-lastEnemySpawn>3000 && enemies.length===0){
+        wavesCompleted++;
+        if(wavesCompleted>=bossWaveThreshold){
+            spawnBoss();
+        }else{
+            spawnEnemies();
+            lastEnemySpawn = Date.now();
+        }
+    }
+}
+
+function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // Player
+    ctx.fillStyle='lime';
+    ctx.beginPath();ctx.arc(player.x,player.y,player.radius,0,Math.PI*2);ctx.fill();
+
+    // Shields
+    shields.forEach(shield=>{
+        for(let r=0;r<shieldRows;r++){
+            for(let c=0;c<shieldCols;c++){
+                if(shield.pixels[r][c]){
+                    ctx.fillStyle='rgba(0,255,0,0.7)';
+                    ctx.fillRect(shield.x+c*pixelSize, shield.y+r*pixelSize,pixelSize,pixelSize);
+                }
+            }
+        }
+    });
+
+    // Enemies
+    enemies.forEach(e=>{
+        ctx.fillStyle=e.color;
+        ctx.beginPath(); ctx.arc(e.x,e.y,e.radius,0,Math.PI*2); ctx.fill();
+        if(e.color==='white'||e.color==='lightgray'){
+            ctx.fillStyle='black'; ctx.beginPath();
+            ctx.arc(e.x-4,e.y-2,2,0,Math.PI*2);
+            ctx.arc(e.x+4,e.y-2,2,0,Math.PI*2);
+            ctx.fill();
+        }
+    });
+
+    // Boss
+    if(boss){
+        ctx.fillStyle='purple';
+        ctx.beginPath();ctx.arc(boss.x,boss.y,boss.radius,0,Math.PI*2);ctx.fill();
+        // eyes
+        ctx.fillStyle='red';
+        ctx.beginPath();
+        ctx.arc(boss.x-15,boss.y-10,5,0,Math.PI*2);
+        ctx.arc(boss.x+15,boss.y-10,5,0,Math.PI*2);
+        ctx.fill();
+    }
+
+    // Bullets
+    playerBullets.forEach(b=>{ctx.fillStyle='white';ctx.fillRect(b.x-b.size/2,b.y-b.size/2,b.size,b.size);});
+    enemyBullets.forEach(b=>{ctx.fillStyle='yellow';ctx.fillRect(b.x-b.size/2,b.y-b.size/2,b.size,b.size);});
+
+    // Explosions
+    explosions.forEach(p=>{
+        ctx.fillStyle=p.color;
+        ctx.beginPath();
+        ctx.arc(p.x,p.y,p.size,0,Math.PI*2);
+        ctx.fill();
+    });
+
+    // HUD
+    ctx.fillStyle='white'; ctx.font='20px Arial';
+    ctx.fillText('Health: '+health,10,30);
+    ctx.fillText('Score: '+score,canvas.width-120,30);
+    if(gameOver){
+        ctx.fillStyle='red'; ctx.font='50px Arial';
+        ctx.fillText('GAME OVER',canvas.width/2-150,canvas.height/2);
+    }
+}
+
+// Loop
+let lastTime=Date.now();
+function loop(){
+    const now=Date.now();
+    const delta=now-lastTime;
+    lastTime=now;
+    update(delta);
+    draw();
+    requestAnimationFrame(loop);
+}
+
+// Start
+spawnEnemies();
+loop();
+</script>
+</body>
+</html>
